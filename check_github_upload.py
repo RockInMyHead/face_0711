@@ -73,9 +73,9 @@ def main():
     print("\n" + "=" * 50)
     print("RECOMMENDATIONS:")
     print("1. If you see uncommitted files, run: git add . && git commit -m 'Update'")
-    print("2. If no remote, run: git remote add origin https://github.com/RockInMyHead/face_0711.git")
+    print("2. If no remote, run: git remote add origin https://github.com/RockInMyHead/face_relis_project.git")
     print("3. To push, run: git push -u origin main")
-    print("4. Check repository: https://github.com/RockInMyHead/face_0711.git")
+    print("4. Check repository: https://github.com/RockInMyHead/face_relis_project.git")
 
 if __name__ == "__main__":
     main()

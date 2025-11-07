@@ -205,7 +205,7 @@ def upload_to_github():
     print("\nUploading to GitHub...")
     print("=" * 50)
 
-    repo_url = "https://github.com/RockInMyHead/face_0711.git"
+    repo_url = "https://github.com/RockInMyHead/face_relis_project.git"
 
     # Проверяем remote
     result = subprocess.run("git remote", shell=True, capture_output=True, text=True, cwd=os.getcwd())

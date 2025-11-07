@@ -1,15 +1,13 @@
 @echo off
 echo ========================================
-echo  FACE CLUSTERING APP - GITHUB UPLOAD
+echo  UPLOAD TO FACE_RELIS_PROJECT
 echo ========================================
 echo.
 echo This will upload your project to:
 echo https://github.com/RockInMyHead/face_relis_project.git
 echo.
-echo Make sure you have:
-echo 1. Git installed
-echo 2. GitHub account configured
-echo 3. Push access to the repository
+echo Repository already exists with 14 commits.
+echo This will add new files and update existing ones.
 echo.
 pause
 
@@ -22,15 +20,10 @@ python github_upload_final.py
 
 echo.
 echo ========================================
-echo  UPLOAD PROCESS COMPLETE
+echo  UPLOAD TO FACE_RELIS COMPLETE
 echo ========================================
 echo.
 echo Check your repository:
 echo https://github.com/RockInMyHead/face_relis_project.git
-echo.
-echo If upload failed, you may need to:
-echo 1. Configure Git with your GitHub credentials
-echo 2. Create a Personal Access Token
-echo 3. Set up SSH keys
 echo.
 pause
