@@ -11,6 +11,7 @@ class PhotoClusterApp {
         this.initializeElements();
         this.setupEventListeners();
         this.loadInitialData();
+        this.updateTasks(); // Загружаем начальный статус задач
         this.startTaskPolling();
         this.startFolderPolling();
     }
@@ -30,7 +31,13 @@ class PhotoClusterApp {
         this.tasksList = document.getElementById('tasksList');
         this.clearTasksBtn = document.getElementById('clearTasksBtn');
         this.zipBtn = document.getElementById('zipBtn');
-        
+
+        // Элементы автообновления
+        this.autoRefreshBtn = document.getElementById('autoRefreshBtn');
+        this.autoRefreshEnabled = true;
+        this.taskPollingInterval = null;
+        this.folderPollingInterval = null;
+
         // Элементы управления файлами
         this.fileToolbar = document.getElementById('fileToolbar');
         this.newFolderBtn = document.getElementById('newFolderBtn');
@@ -58,6 +65,7 @@ class PhotoClusterApp {
             tasksList: this.tasksList,
             clearTasksBtn: this.clearTasksBtn,
             zipBtn: this.zipBtn,
+            autoRefreshBtn: this.autoRefreshBtn,
             fileToolbar: this.fileToolbar,
             contextMenu: this.contextMenu
         };
@@ -89,7 +97,13 @@ class PhotoClusterApp {
         this.processBtn.addEventListener('click', () => this.processQueue());
         this.clearBtn.addEventListener('click', () => this.clearQueue());
         this.zipBtn.addEventListener('click', () => this.downloadZip());
-        
+
+        // Кнопка автообновления
+        this.autoRefreshBtn.addEventListener('click', () => this.toggleAutoRefresh());
+
+        // Кнопки управления задачами
+        this.clearTasksBtn.addEventListener('click', () => this.clearCompletedTasks());
+
         // Кнопки управления файлами
         this.newFolderBtn.addEventListener('click', () => this.openCreateFolderModal());
         
@@ -1334,6 +1348,145 @@ class PhotoClusterApp {
         } finally {
             this.zipBtn.disabled = false;
             this.zipBtn.innerHTML = '📦 Скачать ZIP';
+        }
+    }
+
+    // Автообновление
+    startTaskPolling() {
+        if (this.taskPollingInterval) {
+            clearInterval(this.taskPollingInterval);
+        }
+
+        if (this.autoRefreshEnabled) {
+            this.taskPollingInterval = setInterval(() => {
+                this.updateTasks();
+            }, 1000); // Обновление каждую секунду
+        }
+    }
+
+    startFolderPolling() {
+        if (this.folderPollingInterval) {
+            clearInterval(this.folderPollingInterval);
+        }
+
+        if (this.autoRefreshEnabled) {
+            this.folderPollingInterval = setInterval(() => {
+                if (this.currentPath) {
+                    this.loadFolderContents(this.currentPath);
+                }
+            }, 3000); // Обновление каждые 3 секунды
+        }
+    }
+
+    async updateTasks() {
+        try {
+            const response = await fetch('/api/tasks');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+            const tasks = data.tasks || [];
+
+            // Обновляем список задач
+            this.updateTasksDisplay(tasks);
+
+        } catch (error) {
+            console.error('Error updating tasks:', error);
+            // Не показываем ошибку пользователю, чтобы не спамить
+        }
+    }
+
+    updateTasksDisplay(tasks) {
+        const tasksStr = JSON.stringify(tasks);
+        if (tasksStr === this.lastTasksStr) {
+            return; // Ничего не изменилось
+        }
+        this.lastTasksStr = tasksStr;
+
+        if (tasks.length === 0) {
+            this.tasksList.innerHTML = '<p style="text-align: center; color: #666; padding: 40px 0;">Задач пока нет</p>';
+            this.clearTasksBtn.style.display = 'none';
+            return;
+        }
+
+        let html = '';
+        let hasCompletedTasks = false;
+
+        tasks.forEach(task => {
+            const statusClass = task.status.toLowerCase();
+            const progressPercent = task.progress || 0;
+
+            html += `
+                <div class="task-item ${statusClass}">
+                    <div class="task-header">
+                        <span class="task-status">${task.status.toUpperCase()}</span>
+                        <span>${task.task_id}</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${progressPercent}%"></div>
+                    </div>
+                    <div class="progress-text">${progressPercent}%</div>
+                    <div class="progress-details">
+                        ${task.folder_path ? `Папка: ${task.folder_path.split(/[/\\\\]/).pop()}` : ''}
+                    </div>
+                    <div class="task-message">${task.message || ''}</div>
+                </div>
+            `;
+
+            if (task.status === 'completed' || task.status === 'error') {
+                hasCompletedTasks = true;
+            }
+        });
+
+        this.tasksList.innerHTML = html;
+        this.clearTasksBtn.style.display = hasCompletedTasks ? 'inline-block' : 'none';
+    }
+
+    async clearCompletedTasks() {
+        try {
+            this.clearTasksBtn.disabled = true;
+            this.clearTasksBtn.innerHTML = '<div class="loading"></div> Очистка...';
+
+            const response = await fetch('/api/tasks/clear', { method: 'POST' });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const result = await response.json();
+            this.showNotification(`Очищено ${result.message.match(/(\d+)/)?.[1] || 0} завершенных задач`, 'success');
+
+            // Обновляем список задач
+            await this.updateTasks();
+
+        } catch (error) {
+            console.error('Error clearing tasks:', error);
+            this.showNotification('Ошибка очистки задач: ' + error.message, 'error');
+        } finally {
+            this.clearTasksBtn.disabled = false;
+            this.clearTasksBtn.innerHTML = 'Clear completed';
+        }
+    }
+
+    toggleAutoRefresh() {
+        this.autoRefreshEnabled = !this.autoRefreshEnabled;
+
+        if (this.autoRefreshEnabled) {
+            this.autoRefreshBtn.innerHTML = 'Auto refresh: ON';
+            this.autoRefreshBtn.style.background = 'linear-gradient(45deg, #28a745, #20c997)';
+            this.startTaskPolling();
+            this.startFolderPolling();
+        } else {
+            this.autoRefreshBtn.innerHTML = 'Auto refresh: OFF';
+            this.autoRefreshBtn.style.background = 'linear-gradient(45deg, #dc3545, #fd7e14)';
+            if (this.taskPollingInterval) {
+                clearInterval(this.taskPollingInterval);
+                this.taskPollingInterval = null;
+            }
+            if (this.folderPollingInterval) {
+                clearInterval(this.folderPollingInterval);
+                this.folderPollingInterval = null;
+            }
         }
     }
 }
