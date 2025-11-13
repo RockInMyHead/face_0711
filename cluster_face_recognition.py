@@ -219,7 +219,12 @@ def build_plan_face_recognition(
     emb = FaceRecEmbedder(FaceRecConfig(model=model, tolerance=sim_threshold))
 
     # Сбор изображений
-    all_images = [p for p in input_dir.rglob("*") if p.is_file() and is_image(p)]
+    if custom_files is not None:
+        all_images = [p for p in custom_files if p.is_file() and is_image(p)]
+    elif input_dir is not None:
+        all_images = [p for p in input_dir.rglob("*") if p.is_file() and is_image(p)]
+    else:
+        raise ValueError("Either input_dir or custom_files must be provided")
     if progress_callback:
         progress_callback(f"📂 Найдено изображений: {len(all_images)}", 5)
 
@@ -312,28 +317,16 @@ def build_plan_face_recognition(
 EXCLUDED_COMMON_NAMES = ["общие", "общая", "common", "shared", "все", "all", "mixed", "смешанные"]
 
 
-def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, progress_callback: ProgressCB = None, common_mode: bool = False) -> Tuple[int, int, int]:
+def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, progress_callback: ProgressCB = None) -> Tuple[int, int, int]:
     import shutil
 
     moved, copied = 0, 0
     moved_paths = set()
 
     used_clusters = sorted({c for item in plan.get("plan", []) for c in item["cluster"]})
-    common_photo_clusters = set()
-    if common_mode:
-        for item in plan.get("plan", []):
-            src = Path(item["path"])
-            is_common_photo = any(excluded_name in str(src.parent).lower() for excluded_name in EXCLUDED_COMMON_NAMES)
-            if is_common_photo:
-                common_photo_clusters.update(item["cluster"])
 
-        used_clusters = sorted(set(used_clusters) | common_photo_clusters)
-
-    # В режиме common_mode сохраняем реальные номера кластеров, иначе перенумеровываем
-    if common_mode:
-        cluster_id_map = {old: old for old in used_clusters}  # Сохраняем реальные номера
-    else:
-        cluster_id_map = {old: cluster_start + idx for idx, old in enumerate(used_clusters)}
+    # Всегда сохраняем реальные номера кластеров для совместимости
+    cluster_id_map = {old: old for old in used_clusters}
 
     plan_items = plan.get("plan", [])
     total_items = len(plan_items)
@@ -475,7 +468,7 @@ def process_common_folder_at_level(common_dir: Path, progress_callback: Progress
     data = build_plan_face_recognition(common_dir, progress_callback=progress_callback,
                                      sim_threshold=sim_threshold, min_cluster_size=min_cluster_size,
                                      model=model)
-    moved, copied, _ = distribute_to_folders(data, common_dir, cluster_start=1, progress_callback=progress_callback, common_mode=True)
+    moved, copied, _ = distribute_to_folders(data, common_dir, cluster_start=1, progress_callback=progress_callback)
     return moved, copied
 
 

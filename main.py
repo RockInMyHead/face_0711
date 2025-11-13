@@ -845,74 +845,75 @@ async def process_common_photos(request: ProcessCommonPhotosRequest):
         
         print(f"🔍 [API] Обработка общих фотографий: {len(common_folders)} папок")
         
-        # Собираем все уникальные кластеры из всех общих папок
-        all_unique_clusters = set()
+        # Собираем все фото из всех общих папок для единой кластеризации
+        all_common_images = []
         processed_folders = 0
-        
+
         for common_folder in common_folders:
             try:
-                print(f"🔍 [API] Обрабатываем папку: {common_folder}")
-                
+                print(f"🔍 [API] Собираем фото из папки: {common_folder}")
+
                 # Проверяем, что папка существует
                 folder_path = Path(common_folder)
                 if not folder_path.exists():
                     print(f"⚠️ [API] Папка не существует: {common_folder}")
                     continue
-                
-                # Проверяем, что в папке есть изображения
+
+                # Собираем все изображения из этой папки
                 image_files = list(folder_path.glob("*.jpg")) + list(folder_path.glob("*.jpeg")) + list(folder_path.glob("*.png"))
                 if not image_files:
                     print(f"⚠️ [API] В папке нет изображений: {common_folder}")
                     continue
-                
-                print(f"📸 [API] Найдено изображений: {len(image_files)}")
-                
-                # Кластеризуем общую папку
-                if USE_FACE_RECOGNITION:
-                    # Параметры для face_recognition
-                    plan = build_plan_advanced(
-                        input_dir=folder_path,
-                        progress_callback=None,
-                        sim_threshold=0.60,
-                        min_cluster_size=2,
-                        model="hog"
-                    )
-                else:
-                    # Параметры для insightface
-                    plan = build_plan_advanced(
-                        input_dir=folder_path,
-                        progress_callback=None,
-                        sim_threshold=0.60,
-                        min_cluster_size=2,
-                        ctx_id=0,
-                        det_size=(640, 640),
-                        model_name=INSIGHTFACE_MODEL or "buffalo_l"
-                    )
-                
-                print(f"📊 [API] Результат кластеризации: {type(plan)}")
-                if isinstance(plan, dict):
-                    print(f"📊 [API] Ключи результата: {list(plan.keys())}")
-                
-                # Собираем уникальные кластеры
-                clusters_found = 0
-                if isinstance(plan, dict) and "clusters" in plan:
-                    clusters_found = len(plan["clusters"])
-                    for cluster_id in plan["clusters"].keys():
-                        all_unique_clusters.add(int(cluster_id))
-                elif isinstance(plan, dict) and "clusters_count" in plan:
-                    clusters_found = plan["clusters_count"]
-                    # Если есть clusters_count, создаем фиктивные кластеры
-                    for i in range(clusters_found):
-                        all_unique_clusters.add(i + 1)
-                
+
+                all_common_images.extend(image_files)
                 processed_folders += 1
-                print(f"✅ [API] Обработана папка {common_folder}, найдено кластеров: {clusters_found}")
-                
+                print(f"📸 [API] Добавлено изображений: {len(image_files)} из {common_folder}")
+
             except Exception as e:
-                print(f"⚠️ [API] Ошибка обработки папки {common_folder}: {e}")
+                print(f"⚠️ [API] Ошибка сбора фото из папки {common_folder}: {e}")
                 import traceback
                 traceback.print_exc()
                 continue
+
+        # Кластеризуем все общие фото вместе (передаём список файлов напрямую)
+        print(f"📊 [API] Кластеризуем {len(all_common_images)} общих фото...")
+
+        if USE_FACE_RECOGNITION:
+            # Параметры для face_recognition
+            plan = build_plan_face_recognition(
+                input_dir=None,  # передаём None, используем custom_files
+                custom_files=all_common_images,
+                progress_callback=None,
+                sim_threshold=0.60,
+                min_cluster_size=2,
+                model="hog"
+            )
+        else:
+            # Параметры для insightface с HDBSCAN
+            plan = build_plan_pro(
+                input_dir=None,  # передаём None, используем custom_files
+                custom_files=all_common_images,
+                progress_callback=None,
+                min_cluster_size=2,
+                ctx_id=0,
+                det_size=(640, 640),
+                model_name=INSIGHTFACE_MODEL or "buffalo_l"
+            )
+
+        print(f"📊 [API] Результат единой кластеризации: {type(plan)}")
+        if isinstance(plan, dict):
+            print(f"📊 [API] Ключи результата: {list(plan.keys())}")
+
+        # Собираем уникальные кластеры
+        all_unique_clusters = set()
+        if isinstance(plan, dict) and "clusters" in plan:
+            for cluster_id in plan["clusters"].keys():
+                all_unique_clusters.add(int(cluster_id))
+        elif isinstance(plan, dict) and "clusters_count" in plan:
+            for i in range(plan["clusters_count"]):
+                all_unique_clusters.add(i + 1)
+
+        print(f"✅ [API] Единая кластеризация завершена, найдено кластеров: {len(all_unique_clusters)}")
         
         # Создаем папки для каждого кластера из общих фото + 2 дополнительные пустые
         root_dir = Path(root_path)
@@ -935,6 +936,16 @@ async def process_common_photos(request: ProcessCommonPhotosRequest):
             folder_path.mkdir(parents=True, exist_ok=True)
             created_folders.append(folder_name)
             print(f"📁 [API] Создана дополнительная пустая папка {extra_cluster_id}: {folder_path}")
+
+        # Распределяем фото по созданным папкам
+        print(f"📦 [API] Распределяем фото по папкам кластеров...")
+        moved, copied, next_cluster_id = distribute_to_folders(
+            plan,  # plan содержит кластеризацию для всех общих папок
+            root_dir,  # распределяем в родительскую папку (Младшая/Средняя)
+            cluster_start=1,
+            progress_callback=None
+        )
+        print(f"✅ [API] Распределено: перемещено {moved}, скопировано {copied}")
 
         result = {
             "success": True,
