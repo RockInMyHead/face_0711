@@ -148,8 +148,7 @@ def cluster_embeddings_hdbscan(
 # ------------------------
 
 def build_plan_pro(
-    input_dir: Optional[Path] = None,
-    custom_files: Optional[List[Path]] = None,
+    input_dir: Path,
     progress_callback: ProgressCB = None,
     sim_threshold: float = 0.60,
     min_cluster_size: int = 2,
@@ -157,20 +156,10 @@ def build_plan_pro(
     det_size: Tuple[int, int] = (640, 640),
     model_name: str = "buffalo_l",
     min_samples: Optional[int] = None,
+    joint_mode: str = "copy",
 ) -> Dict:
     # sim_threshold сохраняем для обратной совместимости — HDBSCAN его не использует.
-    """Production-кластеризация лиц с ArcFace + HDBSCAN.
-
-    Args:
-        input_dir: Папка с изображениями (если None, используется custom_files)
-        custom_files: Список конкретных файлов для обработки
-        progress_callback: Функция прогресса
-        sim_threshold: Устаревший параметр (для совместимости)
-        min_cluster_size: Минимальный размер кластера для HDBSCAN
-        ctx_id: GPU ID (0) или CPU (-1)
-        det_size: Размер детектора лиц
-        model_name: Название модели InsightFace
-        min_samples: Параметр HDBSCAN (по умолчанию = min_cluster_size)
+    """Production-кластеризация лиц с ArcFace + Faiss.
 
     Возвращает dict:
       {
@@ -201,12 +190,7 @@ def build_plan_pro(
         emb = ArcFaceEmbedder(ArcFaceConfig(det_size=det_size, ctx_id=ctx_id), model_name=model_name)
 
     # Сбор изображений
-    if custom_files is not None:
-        all_images = [p for p in custom_files if p.is_file() and is_image(p)]
-    elif input_dir is not None:
-        all_images = [p for p in input_dir.rglob("*") if p.is_file() and is_image(p)]
-    else:
-        raise ValueError("Either input_dir or custom_files must be provided")
+    all_images = [p for p in input_dir.rglob("*") if p.is_file() and is_image(p)]
     if progress_callback:
         progress_callback(f"📂 Найдено изображений: {len(all_images)}", 5)
 
@@ -298,16 +282,31 @@ def build_plan_pro(
 # Распределение по папкам (совместимо с упрощённой версией)
 # ------------------------
 
-def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, progress_callback: ProgressCB = None) -> Tuple[int, int, int]:
+def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, progress_callback: ProgressCB = None, common_mode: bool = False, joint_mode: str = "copy") -> Tuple[int, int, int]:
     import shutil
 
     moved, copied = 0, 0
     moved_paths = set()
 
     used_clusters = sorted({c for item in plan.get("plan", []) for c in item["cluster"]})
+    # В режиме ОБЩАЯ получаем только кластеры людей с общих фотографий
+    common_photo_clusters = set()
+    if common_mode:
+        # Находим кластеры людей, которые есть на общих фотографиях
+        for item in plan.get("plan", []):
+            src = Path(item["path"])
+            is_common_photo = any(excluded_name in str(src.parent).lower() for excluded_name in EXCLUDED_COMMON_NAMES)
+            if is_common_photo:
+                common_photo_clusters.update(item["cluster"])
 
-    # Всегда сохраняем реальные номера кластеров для совместимости
-    cluster_id_map = {old: old for old in used_clusters}
+        # Объединяем с used_clusters только кластеры с общих фото
+        used_clusters = sorted(set(used_clusters) | common_photo_clusters)
+
+    # В режиме common_mode сохраняем реальные номера кластеров, иначе перенумеровываем
+    if common_mode:
+        cluster_id_map = {old: old for old in used_clusters}  # Сохраняем реальные номера
+    else:
+        cluster_id_map = {old: cluster_start + idx for idx, old in enumerate(used_clusters)}
 
     plan_items = plan.get("plan", [])
     total_items = len(plan_items)
@@ -337,16 +336,15 @@ def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, pr
             
         # Проверяем, является ли файл общим (находится в папке "общие")
         is_common_photo = any(excluded_name in str(src.parent).lower() for excluded_name in EXCLUDED_COMMON_NAMES)
-
-        # Для общих фото: родительская папка — это та, что содержит "общие" (например, "Младшая" или "Средняя")
-        # Для обычных фото: родительская папка — это папка самого файла
+        
         if is_common_photo:
-            parent_folder = src.parent.parent  # Поднимаемся на уровень выше "общие"
-        else:
-            parent_folder = src.parent
+            # Общие фотографии НЕ перемещаем - оставляем на месте
+            print(f"📌 Общая фотография оставлена: {src.name}")
+            continue
 
         if len(clusters) == 1:
-            # Определяем папку назначения
+            # Определяем папку назначения: берем родительскую папку файла
+            parent_folder = src.parent
             dst = parent_folder / f"{clusters[0]}" / src.name
             dst.parent.mkdir(parents=True, exist_ok=True)
             if src.resolve() != dst.resolve():
@@ -354,17 +352,29 @@ def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, pr
                 moved += 1
                 moved_paths.add(src.parent)
         else:
-            # Для мульти-кластерных файлов копируем в каждый кластер
-            for cid in clusters:
-                dst = parent_folder / f"{cid}" / src.name
+            # Обработка мульти-кластерных файлов в зависимости от режима
+            parent_folder = src.parent
+            if joint_mode == "combine":
+                # Создаем комбинированную папку
+                combo_name = "+".join(str(c) for c in sorted(clusters))
+                dst = parent_folder / combo_name / src.name
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 if src.resolve() != dst.resolve():
-                    shutil.copy2(str(src), str(dst))
-                    copied += 1
-            try:
-                src.unlink()
-            except Exception:
-                pass
+                    shutil.move(str(src), str(dst))
+                    moved += 1
+                    moved_paths.add(src.parent)
+            else:  # joint_mode == "copy" (по умолчанию)
+                # Копируем в каждую папку кластера
+                for cid in clusters:
+                    dst = parent_folder / f"{cid}" / src.name
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    if src.resolve() != dst.resolve():
+                        shutil.copy2(str(src), str(dst))
+                        copied += 1
+                try:
+                    src.unlink()
+                except Exception:
+                    pass
 
     # Переименование папок: добавляем количество файлов только для непустых папок
     if progress_callback:
@@ -413,6 +423,25 @@ def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, pr
         except Exception:
             pass
 
+    # В режиме ОБЩАЯ создаем пустые папки для всех найденных кластеров + 2 дополнительные
+    if common_mode:
+        # Создаем папки в родительской папке (не в папке "общие")
+        parent_dir = base_dir.parent
+        print(f"📁 Создаем папки в родительской директории: {parent_dir}")
+
+        # Создаем папки для всех найденных кластеров (теперь с реальными номерами)
+        for cluster_id in used_clusters:
+            empty_folder = parent_dir / str(cluster_id)
+            empty_folder.mkdir(parents=True, exist_ok=True)
+            print(f"📁 Создана пустая папка для кластера: {cluster_id} в {parent_dir}")
+
+        # Создаем 2 дополнительные пустые папки
+        max_cluster_id = max(used_clusters) if used_clusters else 0
+        for i in range(1, 3):  # Создаем 2 дополнительные папки
+            extra_cluster_id = max_cluster_id + i
+            extra_folder = parent_dir / str(extra_cluster_id)
+            extra_folder.mkdir(parents=True, exist_ok=True)
+            print(f"📁 Создана дополнительная пустая папка: {extra_cluster_id} в {parent_dir}")
 
     return moved, copied, cluster_start + len(used_clusters)
 
@@ -447,7 +476,7 @@ def process_common_folder_at_level(common_dir: Path, progress_callback: Progress
     data = build_plan_pro(common_dir, progress_callback=progress_callback,
                           sim_threshold=sim_threshold, min_cluster_size=min_cluster_size,
                           ctx_id=ctx_id, det_size=det_size)
-    moved, copied, _ = distribute_to_folders(data, common_dir, cluster_start=1, progress_callback=progress_callback)
+    moved, copied, _ = distribute_to_folders(data, common_dir, cluster_start=1, progress_callback=progress_callback, common_mode=True)
     return moved, copied
 
 

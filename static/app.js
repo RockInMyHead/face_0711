@@ -27,6 +27,7 @@ class PhotoClusterApp {
         this.clearBtn = document.getElementById('clearBtn');
         this.includeExcludedBtn = document.getElementById('includeExcludedBtn');
         this.includeExcluded = false;
+        this.jointMode = 'copy'; // 'copy' or 'combine'
         this.addQueueBtn = document.getElementById('addQueueBtn');
         this.tasksList = document.getElementById('tasksList');
         this.clearTasksBtn = document.getElementById('clearTasksBtn');
@@ -857,9 +858,9 @@ class PhotoClusterApp {
                 return;
             }
 
-            const url = `/api/process?includeExcluded=${this.includeExcluded}`;
+            const url = `/api/process?includeExcluded=${this.includeExcluded}&jointMode=${this.jointMode}`;
             console.log(`🔍 [processQueue] Отправляем запрос: ${url}`);
-            console.log(`🔍 [processQueue] includeExcluded: ${this.includeExcluded}`);
+            console.log(`🔍 [processQueue] includeExcluded: ${this.includeExcluded}, jointMode: ${this.jointMode}`);
             
             const response = await fetch(url, { method: 'POST', cache: 'no-store' });
             console.log('🔍 [processQueue] Статус ответа:', response.status, response.statusText);
@@ -908,7 +909,7 @@ class PhotoClusterApp {
                 return;
             }
 
-            const url = '/api/process?includeExcluded=true';
+            const url = `/api/process?includeExcluded=true&jointMode=${this.jointMode}`;
             console.log(`🔍 [processQueueWithExcluded] Отправляем запрос: ${url}`);
             
             const response = await fetch(url, { method: 'POST', cache: 'no-store' });

@@ -211,7 +211,7 @@ def get_folder_contents(path: Path) -> List[FolderInfo]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при чтении папки: {str(e)}")
 
-async def process_folder_task(task_id: str, folder_path: str, include_excluded: bool = False):
+async def process_folder_task(task_id: str, folder_path: str, include_excluded: bool = False, joint_mode: str = "copy"):
     loop = asyncio.get_event_loop()
     """Фоновая задача обработки папки"""
     print(f"🔍 [TASK] process_folder_task запущена: task_id={task_id}, folder_path={folder_path}, include_excluded={include_excluded}")
@@ -373,6 +373,7 @@ async def process_folder_task(task_id: str, folder_path: str, include_excluded: 
                             progress_callback=progress_callback,
                             sim_threshold=0.6,
                             min_cluster_size=2,
+                            joint_mode=joint_mode,
                             model="hog"  # "hog" для скорости, "cnn" для точности
                         )
                     else:
@@ -383,6 +384,7 @@ async def process_folder_task(task_id: str, folder_path: str, include_excluded: 
                             progress_callback=progress_callback,
                             sim_threshold=0.6,
                             min_cluster_size=2,
+                            joint_mode=joint_mode,
                             ctx_id=0,
                             det_size=(640, 640),
                             model_name=INSIGHTFACE_MODEL or "buffalo_l"
@@ -393,7 +395,7 @@ async def process_folder_task(task_id: str, folder_path: str, include_excluded: 
                     plan = await loop.run_in_executor(
                         executor,
                         functools.partial(build_plan_advanced, input_dir=path, progress_callback=progress_callback,
-                                        model_name=INSIGHTFACE_MODEL or "buffalo_l")
+                                        joint_mode=joint_mode, model_name=INSIGHTFACE_MODEL or "buffalo_l")
                     )
             else:
                 print(f"🚀 [TASK] Запускаю стандартную кластеризацию для {folder_path}")
@@ -434,7 +436,9 @@ async def process_folder_task(task_id: str, folder_path: str, include_excluded: 
                     plan,
                     Path(folder_path),
                     1,
-                    progress_callback
+                    progress_callback,
+                    False,  # common_mode
+                    joint_mode
                 )
             except Exception as e:
                 app_state["current_tasks"][task_id]["status"] = "error"
@@ -586,7 +590,7 @@ async def clear_queue():
     return {"message": "Очередь очищена"}
 
 @app.post("/api/process")
-async def process_queue(background_tasks: BackgroundTasks, includeExcluded: bool = False):
+async def process_queue(background_tasks: BackgroundTasks, includeExcluded: bool = False, jointMode: str = "copy"):
     """Запустить обработку очереди"""
     print(f"🔍 [API] process_queue вызван: includeExcluded={includeExcluded}")
     print(f"🔍 [API] Текущая очередь: {app_state['queue']}")
@@ -613,7 +617,7 @@ async def process_queue(background_tasks: BackgroundTasks, includeExcluded: bool
         }
         
         print(f"🔍 [API] Добавляем фоновую задачу: {task_id}")
-        background_tasks.add_task(process_folder_task, task_id, folder_path, includeExcluded)
+        background_tasks.add_task(process_folder_task, task_id, folder_path, includeExcluded, jointMode)
         task_ids.append(task_id)
     
     print(f"🔍 [API] Очищаем очередь, создано {len(task_ids)} задач")
@@ -875,6 +879,7 @@ async def process_common_photos(request: ProcessCommonPhotosRequest):
                         progress_callback=None,
                         sim_threshold=0.60,
                         min_cluster_size=2,
+                        joint_mode="copy",  # Для общих фото всегда копируем
                         model="hog"
                     )
                 else:
@@ -884,6 +889,7 @@ async def process_common_photos(request: ProcessCommonPhotosRequest):
                         progress_callback=None,
                         sim_threshold=0.60,
                         min_cluster_size=2,
+                        joint_mode="copy",  # Для общих фото всегда копируем
                         ctx_id=0,
                         det_size=(640, 640),
                         model_name=INSIGHTFACE_MODEL or "buffalo_l"
