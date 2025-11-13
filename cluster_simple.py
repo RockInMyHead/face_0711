@@ -445,11 +445,19 @@ def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, pr
 
     # Пост-валидация кластеров
     if post_validate:
+        print(f"🔍 [POST-VALIDATE] Начинаем пост-валидацию, post_validate={post_validate}")
+        print(f"🔍 [POST-VALIDATE] Количество кластеров для проверки: {len(cluster_file_counts)}")
         if progress_callback:
             progress_callback("🔍 Пост-валидация кластеров...", 95)
-        false_positives_moved = post_validate_clusters(base_dir, cluster_file_counts.keys(), progress_callback)
-        if false_positives_moved > 0:
-            print(f"⚠️ Возвращено {false_positives_moved} фото из false positive кластеров в родительскую папку")
+        try:
+            false_positives_moved = post_validate_clusters(base_dir, cluster_file_counts.keys(), progress_callback)
+            print(f"✅ [POST-VALIDATE] Пост-валидация завершена, возвращено {false_positives_moved} фото")
+            if false_positives_moved > 0:
+                print(f"⚠️ Возвращено {false_positives_moved} фото из false positive кластеров в родительскую папку")
+        except Exception as e:
+            print(f"❌ [POST-VALIDATE] Критическая ошибка в пост-валидации: {e}")
+            import traceback
+            traceback.print_exc()
 
     return moved, copied, cluster_start + len(used_clusters)
 
@@ -464,10 +472,15 @@ def post_validate_clusters(base_dir: Path, cluster_ids: Iterable[int], progress_
 
     Возвращает количество перемещенных фото.
     """
+    print(f"🔍 [POST-VALIDATE] Функция post_validate_clusters запущена")
+    print(f"🔍 [POST-VALIDATE] base_dir: {base_dir}")
+    print(f"🔍 [POST-VALIDATE] cluster_ids: {list(cluster_ids)}")
+
     total_moved = 0
     checked_clusters = 0
 
     for cluster_id in cluster_ids:
+        print(f"🔍 [POST-VALIDATE] Проверяем кластер {cluster_id}")
         cluster_dir = base_dir / str(cluster_id)
         if not cluster_dir.exists():
             continue
@@ -478,16 +491,21 @@ def post_validate_clusters(base_dir: Path, cluster_ids: Iterable[int], progress_
             if file_path.is_file() and file_path.suffix.lower() in IMG_EXTS:
                 cluster_images.append(file_path)
 
+        print(f"🔍 [POST-VALIDATE] В кластере {cluster_id} найдено {len(cluster_images)} фото: {[p.name for p in cluster_images[:3]]}{'...' if len(cluster_images) > 3 else ''}")
+
         if len(cluster_images) < 2:
             # Папка с 0-1 фото не проверяем
+            print(f"🔍 [POST-VALIDATE] Кластер {cluster_id} пропущен (слишком мало фото)")
             continue
 
         checked_clusters += 1
+        print(f"🔍 [POST-VALIDATE] Начинаем валидацию кластера {cluster_id} с {len(cluster_images)} фото")
         if progress_callback and checked_clusters % 5 == 0:
             progress_callback(f"🔍 Проверено {checked_clusters} кластеров...", 95)
 
         # Повторно кластеризуем лица из этой папки
         try:
+            print(f"🔍 [POST-VALIDATE] Запускаем повторную кластеризацию для кластера {cluster_id}")
             # Создаем временный план только для этой папки
             temp_plan = build_plan_pro(
                 cluster_dir,
@@ -501,9 +519,11 @@ def post_validate_clusters(base_dir: Path, cluster_ids: Iterable[int], progress_
 
             # Проверяем результат
             clusters_in_folder = temp_plan.get("clusters", {})
+            print(f"🔍 [POST-VALIDATE] Результат повторной кластеризации кластера {cluster_id}: {len(clusters_in_folder)} кластеров")
             if len(clusters_in_folder) > 1:
                 # False positive! В папке оказались разные люди
-                print(f"⚠️ False positive в кластере {cluster_id}: найдено {len(clusters_in_folder)} разных людей")
+                print(f"⚠️ [POST-VALIDATE] False positive в кластере {cluster_id}: найдено {len(clusters_in_folder)} разных людей")
+                print(f"⚠️ [POST-VALIDATE] Кластеры в папке: {list(clusters_in_folder.keys())}")
 
                 # Возвращаем все фото обратно в родительскую папку (base_dir)
                 for img_path in cluster_images:
@@ -517,17 +537,19 @@ def post_validate_clusters(base_dir: Path, cluster_ids: Iterable[int], progress_
 
                     shutil.move(str(img_path), str(dst))
                     total_moved += 1
-                    print(f"↩️ Фото {img_path.name} возвращено в {base_dir}")
+                    print(f"↩️ [POST-VALIDATE] Фото {img_path.name} возвращено в {base_dir}")
 
                 # Удаляем пустую папку кластера
                 try:
                     cluster_dir.rmdir()
-                    print(f"🗑️ Удалена false positive папка: {cluster_dir}")
-                except Exception:
-                    pass
+                    print(f"🗑️ [POST-VALIDATE] Удалена false positive папка: {cluster_dir}")
+                except Exception as e:
+                    print(f"⚠️ [POST-VALIDATE] Не удалось удалить папку {cluster_dir}: {e}")
 
         except Exception as e:
-            print(f"⚠️ Ошибка валидации кластера {cluster_id}: {e}")
+            print(f"⚠️ [POST-VALIDATE] Ошибка валидации кластера {cluster_id}: {e}")
+            import traceback
+            traceback.print_exc()
             continue
 
     if progress_callback:
