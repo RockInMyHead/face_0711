@@ -966,4 +966,16 @@ async def favicon():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import logging
+
+    # Настройка логирования для фильтрации шумных запросов
+    class PreviewFilter(logging.Filter):
+        def filter(self, record):
+            # Фильтруем логи для /api/image/preview
+            return '/api/image/preview' not in record.getMessage()
+
+    # Получаем логгер uvicorn.access
+    access_logger = logging.getLogger('uvicorn.access')
+    access_logger.addFilter(PreviewFilter())
+
+    uvicorn.run(app, host="0.0.0.0", port=8000, access_log=True)
