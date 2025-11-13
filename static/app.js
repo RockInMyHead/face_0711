@@ -248,6 +248,32 @@ class PhotoClusterApp {
         }
     }
 
+    async loadFolderContents(path) {
+        if (!path) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/folder?path=${encodeURIComponent(path)}&_ts=${Date.now()}`, { cache: 'no-store' });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            if (data.path) {
+                this.currentPathEl.innerHTML = `<strong>Текущая папка:</strong> ${data.path}`;
+            }
+            const contents = data.contents || [];
+            if (!data.contents) {
+                if (data.folders) contents.push(...data.folders.map(f => ({ name: f.name, path: f.path, is_directory: true })));
+                if (data.images) contents.push(...data.images.map(i => ({ name: i.name, path: i.path, is_directory: false })));
+            }
+            await this.displayFolderContents(contents);
+        } catch (error) {
+            console.error('Error loading folder contents:', error);
+        }
+    }
+
     async displayFolderContents(contents) {
         this.folderContents.innerHTML = '';
         

@@ -1,14 +1,12 @@
 """
-Production-вариант кластеризации лиц на базе ArcFace + Faiss.
+Production-вариант кластеризации лиц на базе ArcFace + HDBSCAN.
 - Детекция и эмбеддинги: InsightFace (ArcFace), app.FaceAnalysis
-- Кластеризация: граф по порогу косинусной близости (Faiss range_search + компоненты связности)
+- Кластеризация: адаптивная плотностная HDBSCAN поверх L2-нормированных эмбеддингов
 - Совместим по интерфейсу с упрощённой версией: build_plan_pro, distribute_to_folders, process_group_folder
 - Устойчив к Unicode-путям, много-лицам на фото, копированию для мультикластерных кадров
 
 Зависимости:
-    pip install insightface onnxruntime-gpu faiss-gpu opencv-python pillow scikit-learn numpy
-или (CPU-only):
-    pip install insightface onnxruntime faiss-cpu opencv-python pillow scikit-learn numpy
+    pip install insightface onnxruntime opencv-python pillow scikit-learn numpy hdbscan
 
 Автор: prod-ready скелет. Подключайте в своё приложение напрямую.
 """
@@ -22,13 +20,12 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import cv2
 from PIL import Image
-from collections import defaultdict, deque
+from collections import defaultdict
 
-# Faiss может отсутствовать при сборке — валидируем импорт.
 try:
-    import faiss  # type: ignore
+    import hdbscan  # type: ignore
 except Exception as e:  # pragma: no cover
-    faiss = None
+    hdbscan = None
 
 try:
     from insightface.app import FaceAnalysis
@@ -112,95 +109,37 @@ class ArcFaceEmbedder:
         return results
 
 
-# ------------------------
-# Кластеризация через Faiss (граф по порогу косинусной близости)
-# ------------------------
-@dataclass
-class ClusterParams:
-    sim_threshold: float = 0.60   # чем выше, тем строже (0.55–0.65 — чаще всего ок)
-    min_cluster_size: int = 2     # срезаем мелкие компоненты как одиночки
-    max_edges_per_node: int = 50  # ограничение на степень узла (ускорение на огромных N)
+def cluster_embeddings_hdbscan(
+    embeddings: np.ndarray,
+    min_cluster_size: int = 3,
+    min_samples: Optional[int] = None,
+) -> np.ndarray:
+    """Кластеризация эмбеддингов с адаптивным HDBSCAN."""
+    if embeddings.size == 0:
+        return np.array([], dtype=np.int32)
+    if hdbscan is None:
+        raise ImportError("hdbscan не установлен. Установите пакет hdbscan.")
 
-
-def _build_similarity_graph_faiss(embeddings: np.ndarray, params: ClusterParams) -> List[List[int]]:
-    if faiss is None:
-        raise ImportError("faiss не установлен. Установите faiss-gpu или faiss-cpu.")
     if embeddings.dtype != np.float32:
         embeddings = embeddings.astype(np.float32)
 
-    # Эмбеддинги должны быть L2-нормированы для cosine=dot
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-12
     X = embeddings / norms
 
-    d = X.shape[1]
-    index = faiss.IndexFlatIP(d)
-    index.add(X)
+    clusterer = hdbscan.HDBSCAN(
+        metric="euclidean",
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples or min_cluster_size,
+        cluster_selection_epsilon=0.0,
+        cluster_selection_method="eom",
+    )
+    labels = clusterer.fit_predict(X)
 
-    # range_search: вернёт пары (i,j) с sim >= threshold
-    lims, D, I = index.range_search(X, params.sim_threshold)
-
-    # Формируем списки смежности (без self-loop и дубликатов)
-    n = X.shape[0]
-    adj: List[List[int]] = [[] for _ in range(n)]
-    for i in range(n):
-        beg, end = lims[i], lims[i + 1]
-        # сортируем по sim убыв.
-        pairs = sorted(zip(I[beg:end], D[beg:end]), key=lambda t: -t[1])
-        count = 0
-        for j, sim in pairs:
-            if j == i or j < 0:
-                continue
-            adj[i].append(int(j))
-            count += 1
-            if params.max_edges_per_node and count >= params.max_edges_per_node:
-                break
-    return adj
-
-
-def _connected_components(adj: List[List[int]]) -> np.ndarray:
-    n = len(adj)
-    labels = -np.ones(n, dtype=np.int32)
-    cid = 0
-    for i in range(n):
-        if labels[i] != -1:
-            continue
-        # BFS/DFS
-        q = deque([i])
-        labels[i] = cid
-        while q:
-            u = q.popleft()
-            for v in adj[u]:
-                if labels[v] == -1:
-                    labels[v] = cid
-                    q.append(v)
-        cid += 1
-    return labels
-
-
-def cluster_embeddings_faiss(embeddings: np.ndarray, params: ClusterParams) -> np.ndarray:
-    if embeddings.size == 0:
-        return np.array([], dtype=np.int32)
-    adj = _build_similarity_graph_faiss(embeddings, params)
-    labels = _connected_components(adj)
-
-    # Отфильтруем мелкие кластеры: одиночки → -1, потом переразметим плотные
-    sizes = defaultdict(int)
-    for lb in labels:
-        sizes[int(lb)] += 1
-
-    for i, lb in enumerate(labels):
-        if sizes[int(lb)] < params.min_cluster_size:
-            labels[i] = -1
-
-    # Сжимаем индексы кластеров к [0..K-1], игнорируя -1
     uniq = sorted(x for x in set(labels.tolist()) if x != -1)
     remap = {old: i for i, old in enumerate(uniq)}
     out = labels.copy()
     for i, lb in enumerate(labels):
-        if lb == -1:
-            out[i] = -1
-        else:
-            out[i] = remap[int(lb)]
+        out[i] = remap.get(int(lb), -1)
     return out
 
 
@@ -216,7 +155,9 @@ def build_plan_pro(
     ctx_id: int = 0,
     det_size: Tuple[int, int] = (640, 640),
     model_name: str = "buffalo_l",
+    min_samples: Optional[int] = None,
 ) -> Dict:
+    # sim_threshold сохраняем для обратной совместимости — HDBSCAN его не использует.
     """Production-кластеризация лиц с ArcFace + Faiss.
 
     Возвращает dict:
@@ -289,12 +230,13 @@ def build_plan_pro(
 
     X = np.vstack(all_embeddings).astype(np.float32)
 
-    # Кластеризация через Faiss
+    # Кластеризация через HDBSCAN
     if progress_callback:
-        progress_callback("🔗 Построение графа похожести (Faiss)", 70)
-    labels = cluster_embeddings_faiss(
+        progress_callback("🔗 Кластеризация HDBSCAN", 70)
+    labels = cluster_embeddings_hdbscan(
         X,
-        ClusterParams(sim_threshold=sim_threshold, min_cluster_size=min_cluster_size),
+        min_cluster_size=max(2, min_cluster_size),
+        min_samples=min_samples,
     )
 
     if progress_callback:
