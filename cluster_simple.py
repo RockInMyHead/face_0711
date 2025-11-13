@@ -282,7 +282,7 @@ def build_plan_pro(
 # Распределение по папкам (совместимо с упрощённой версией)
 # ------------------------
 
-def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, progress_callback: ProgressCB = None, common_mode: bool = False, joint_mode: str = "copy") -> Tuple[int, int, int]:
+def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, progress_callback: ProgressCB = None, common_mode: bool = False, joint_mode: str = "copy", post_validate: bool = False) -> Tuple[int, int, int]:
     import shutil
 
     moved, copied = 0, 0
@@ -443,7 +443,99 @@ def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, pr
             extra_folder.mkdir(parents=True, exist_ok=True)
             print(f"📁 Создана дополнительная пустая папка: {extra_cluster_id} в {parent_dir}")
 
+    # Пост-валидация кластеров
+    if post_validate:
+        if progress_callback:
+            progress_callback("🔍 Пост-валидация кластеров...", 95)
+        false_positives_moved = post_validate_clusters(base_dir, cluster_file_counts.keys(), progress_callback)
+        if false_positives_moved > 0:
+            print(f"⚠️ Перемещено {false_positives_moved} фото из false positive кластеров")
+
     return moved, copied, cluster_start + len(used_clusters)
+
+
+# ------------------------
+# Пост-валидация кластеров
+# ------------------------
+
+def post_validate_clusters(base_dir: Path, cluster_ids: Iterable[int], progress_callback: ProgressCB = None) -> int:
+    """Проверяет созданные кластеры на false positives.
+    Если в папке кластера оказались лица разных людей, перемещает фото в false_positives.
+
+    Возвращает количество перемещенных фото.
+    """
+    false_positives_dir = base_dir / "false_positives"
+    false_positives_dir.mkdir(parents=True, exist_ok=True)
+
+    total_moved = 0
+    checked_clusters = 0
+
+    for cluster_id in cluster_ids:
+        cluster_dir = base_dir / str(cluster_id)
+        if not cluster_dir.exists():
+            continue
+
+        # Собираем все фото из кластерной папки
+        cluster_images = []
+        for file_path in cluster_dir.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in IMG_EXTS:
+                cluster_images.append(file_path)
+
+        if len(cluster_images) < 2:
+            # Папка с 0-1 фото не проверяем
+            continue
+
+        checked_clusters += 1
+        if progress_callback and checked_clusters % 5 == 0:
+            progress_callback(f"🔍 Проверено {checked_clusters} кластеров...", 95)
+
+        # Повторно кластеризуем лица из этой папки
+        try:
+            # Создаем временный план только для этой папки
+            temp_plan = build_plan_pro(
+                cluster_dir,
+                progress_callback=None,  # Тихая обработка
+                sim_threshold=0.6,
+                min_cluster_size=2,
+                ctx_id=0,
+                det_size=(640, 640),
+                joint_mode="copy"
+            )
+
+            # Проверяем результат
+            clusters_in_folder = temp_plan.get("clusters", {})
+            if len(clusters_in_folder) > 1:
+                # False positive! В папке оказались разные люди
+                print(f"⚠️ False positive в кластере {cluster_id}: найдено {len(clusters_in_folder)} разных людей")
+
+                # Перемещаем все фото в false_positives
+                for img_path in cluster_images:
+                    dst = false_positives_dir / img_path.name
+                    counter = 1
+                    while dst.exists():
+                        stem = img_path.stem
+                        suffix = img_path.suffix
+                        dst = false_positives_dir / f"{stem}_{counter}{suffix}"
+                        counter += 1
+
+                    shutil.move(str(img_path), str(dst))
+                    total_moved += 1
+
+                # Удаляем пустую папку кластера
+                try:
+                    cluster_dir.rmdir()
+                    print(f"🗑️ Удалена false positive папка: {cluster_dir}")
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print(f"⚠️ Ошибка валидации кластера {cluster_id}: {e}")
+            continue
+
+    if progress_callback:
+        progress_callback(f"✅ Пост-валидация завершена: проверено {checked_clusters} кластеров", 100)
+
+    return total_moved
 
 
 # ------------------------

@@ -211,7 +211,7 @@ def get_folder_contents(path: Path) -> List[FolderInfo]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при чтении папки: {str(e)}")
 
-async def process_folder_task(task_id: str, folder_path: str, include_excluded: bool = False, joint_mode: str = "copy"):
+async def process_folder_task(task_id: str, folder_path: str, include_excluded: bool = False, joint_mode: str = "copy", post_validate: bool = False):
     loop = asyncio.get_event_loop()
     """Фоновая задача обработки папки"""
     print(f"🔍 [TASK] process_folder_task запущена: task_id={task_id}, folder_path={folder_path}, include_excluded={include_excluded}")
@@ -438,7 +438,8 @@ async def process_folder_task(task_id: str, folder_path: str, include_excluded: 
                     1,
                     progress_callback,
                     False,  # common_mode
-                    joint_mode
+                    joint_mode,
+                    post_validate
                 )
             except Exception as e:
                 app_state["current_tasks"][task_id]["status"] = "error"
@@ -590,7 +591,7 @@ async def clear_queue():
     return {"message": "Очередь очищена"}
 
 @app.post("/api/process")
-async def process_queue(background_tasks: BackgroundTasks, includeExcluded: bool = False, jointMode: str = "copy"):
+async def process_queue(background_tasks: BackgroundTasks, includeExcluded: bool = False, jointMode: str = "copy", postValidate: bool = False):
     """Запустить обработку очереди"""
     print(f"🔍 [API] process_queue вызван: includeExcluded={includeExcluded}")
     print(f"🔍 [API] Текущая очередь: {app_state['queue']}")
@@ -617,7 +618,7 @@ async def process_queue(background_tasks: BackgroundTasks, includeExcluded: bool
         }
         
         print(f"🔍 [API] Добавляем фоновую задачу: {task_id}")
-        background_tasks.add_task(process_folder_task, task_id, folder_path, includeExcluded, jointMode)
+        background_tasks.add_task(process_folder_task, task_id, folder_path, includeExcluded, jointMode, postValidate)
         task_ids.append(task_id)
     
     print(f"🔍 [API] Очищаем очередь, создано {len(task_ids)} задач")

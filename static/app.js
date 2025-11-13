@@ -29,6 +29,8 @@ class PhotoClusterApp {
         this.includeExcluded = false;
         this.jointModeSelect = document.getElementById('jointModeSelect');
         this.jointMode = 'copy'; // 'copy' or 'combine'
+        this.postValidateCheckbox = document.getElementById('postValidateCheckbox');
+        this.postValidate = false;
         this.addQueueBtn = document.getElementById('addQueueBtn');
         this.tasksList = document.getElementById('tasksList');
         this.clearTasksBtn = document.getElementById('clearTasksBtn');
@@ -68,6 +70,7 @@ class PhotoClusterApp {
             clearTasksBtn: this.clearTasksBtn,
             zipBtn: this.zipBtn,
             jointModeSelect: this.jointModeSelect,
+            postValidateCheckbox: this.postValidateCheckbox,
             autoRefreshBtn: this.autoRefreshBtn,
             fileToolbar: this.fileToolbar,
             contextMenu: this.contextMenu
@@ -81,6 +84,7 @@ class PhotoClusterApp {
 
         // Инициализируем селект режима
         this.jointModeSelect.value = this.jointMode;
+        this.postValidateCheckbox.checked = this.postValidate;
     }
 
     setupEventListeners() {
@@ -103,6 +107,12 @@ class PhotoClusterApp {
         this.jointModeSelect.addEventListener('change', (e) => {
             this.jointMode = e.target.value;
             console.log('🔧 Joint mode changed to:', this.jointMode);
+        });
+
+        // Пост-валидация
+        this.postValidateCheckbox.addEventListener('change', (e) => {
+            this.postValidate = e.target.checked;
+            console.log('🔧 Post validate changed to:', this.postValidate);
         });
 
         // Кнопки обработки очереди
@@ -869,9 +879,9 @@ class PhotoClusterApp {
                 return;
             }
 
-            const url = `/api/process?includeExcluded=${this.includeExcluded}&jointMode=${this.jointMode}`;
+            const url = `/api/process?includeExcluded=${this.includeExcluded}&jointMode=${this.jointMode}&postValidate=${this.postValidate}`;
             console.log(`🔍 [processQueue] Отправляем запрос: ${url}`);
-            console.log(`🔍 [processQueue] includeExcluded: ${this.includeExcluded}, jointMode: ${this.jointMode}`);
+            console.log(`🔍 [processQueue] includeExcluded: ${this.includeExcluded}, jointMode: ${this.jointMode}, postValidate: ${this.postValidate}`);
             
             const response = await fetch(url, { method: 'POST', cache: 'no-store' });
             console.log('🔍 [processQueue] Статус ответа:', response.status, response.statusText);
@@ -920,7 +930,7 @@ class PhotoClusterApp {
                 return;
             }
 
-            const url = `/api/process?includeExcluded=true&jointMode=${this.jointMode}`;
+            const url = `/api/process?includeExcluded=true&jointMode=${this.jointMode}&postValidate=${this.postValidate}`;
             console.log(`🔍 [processQueueWithExcluded] Отправляем запрос: ${url}`);
             
             const response = await fetch(url, { method: 'POST', cache: 'no-store' });
