@@ -828,9 +828,15 @@
                         <button class="action-btn clear" id="clearBtn" disabled>
                             🧹 Очистить очередь
                         </button>
-                        <button class="action-btn general" id="includeExcludedBtn">
-                            📂 Общие
-                        </button>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <select id="jointModeSelect" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd; background: white; font-size: 14px;">
+                                <option value="copy">Совместные: Копировать</option>
+                                <option value="combine">Совместные: Комбинировать</option>
+                            </select>
+                            <button class="action-btn general" id="includeExcludedBtn">
+                                📂 Общие
+                            </button>
+                        </div>
                         <button class="action-btn zip" id="zipBtn" disabled>
                             📦 Скачать ZIP
                         </button>

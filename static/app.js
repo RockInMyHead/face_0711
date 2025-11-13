@@ -27,6 +27,7 @@ class PhotoClusterApp {
         this.clearBtn = document.getElementById('clearBtn');
         this.includeExcludedBtn = document.getElementById('includeExcludedBtn');
         this.includeExcluded = false;
+        this.jointModeSelect = document.getElementById('jointModeSelect');
         this.jointMode = 'copy'; // 'copy' or 'combine'
         this.addQueueBtn = document.getElementById('addQueueBtn');
         this.tasksList = document.getElementById('tasksList');
@@ -66,6 +67,7 @@ class PhotoClusterApp {
             tasksList: this.tasksList,
             clearTasksBtn: this.clearTasksBtn,
             zipBtn: this.zipBtn,
+            jointModeSelect: this.jointModeSelect,
             autoRefreshBtn: this.autoRefreshBtn,
             fileToolbar: this.fileToolbar,
             contextMenu: this.contextMenu
@@ -76,6 +78,9 @@ class PhotoClusterApp {
                 console.error(`Element not found: ${name}`);
             }
         }
+
+        // Инициализируем селект режима
+        this.jointModeSelect.value = this.jointMode;
     }
 
     setupEventListeners() {
@@ -94,6 +99,12 @@ class PhotoClusterApp {
             const path = e.dataTransfer.getData('text/plain');
             if (path) this.addToQueue(path);
         });
+        // Режим обработки совместных фото
+        this.jointModeSelect.addEventListener('change', (e) => {
+            this.jointMode = e.target.value;
+            console.log('🔧 Joint mode changed to:', this.jointMode);
+        });
+
         // Кнопки обработки очереди
         this.processBtn.addEventListener('click', () => this.processQueue());
         this.clearBtn.addEventListener('click', () => this.clearQueue());
