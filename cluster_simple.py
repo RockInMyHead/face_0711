@@ -449,7 +449,7 @@ def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, pr
             progress_callback("🔍 Пост-валидация кластеров...", 95)
         false_positives_moved = post_validate_clusters(base_dir, cluster_file_counts.keys(), progress_callback)
         if false_positives_moved > 0:
-            print(f"⚠️ Перемещено {false_positives_moved} фото из false positive кластеров")
+            print(f"⚠️ Возвращено {false_positives_moved} фото из false positive кластеров в родительскую папку")
 
     return moved, copied, cluster_start + len(used_clusters)
 
@@ -460,13 +460,10 @@ def distribute_to_folders(plan: dict, base_dir: Path, cluster_start: int = 1, pr
 
 def post_validate_clusters(base_dir: Path, cluster_ids: Iterable[int], progress_callback: ProgressCB = None) -> int:
     """Проверяет созданные кластеры на false positives.
-    Если в папке кластера оказались лица разных людей, перемещает фото в false_positives.
+    Если в папке кластера оказались лица разных людей, возвращает фото в родительскую папку.
 
     Возвращает количество перемещенных фото.
     """
-    false_positives_dir = base_dir / "false_positives"
-    false_positives_dir.mkdir(parents=True, exist_ok=True)
-
     total_moved = 0
     checked_clusters = 0
 
@@ -508,18 +505,19 @@ def post_validate_clusters(base_dir: Path, cluster_ids: Iterable[int], progress_
                 # False positive! В папке оказались разные люди
                 print(f"⚠️ False positive в кластере {cluster_id}: найдено {len(clusters_in_folder)} разных людей")
 
-                # Перемещаем все фото в false_positives
+                # Возвращаем все фото обратно в родительскую папку (base_dir)
                 for img_path in cluster_images:
-                    dst = false_positives_dir / img_path.name
+                    dst = base_dir / img_path.name
                     counter = 1
                     while dst.exists():
                         stem = img_path.stem
                         suffix = img_path.suffix
-                        dst = false_positives_dir / f"{stem}_{counter}{suffix}"
+                        dst = base_dir / f"{stem}_{counter}{suffix}"
                         counter += 1
 
                     shutil.move(str(img_path), str(dst))
                     total_moved += 1
+                    print(f"↩️ Фото {img_path.name} возвращено в {base_dir}")
 
                 # Удаляем пустую папку кластера
                 try:
@@ -533,7 +531,7 @@ def post_validate_clusters(base_dir: Path, cluster_ids: Iterable[int], progress_
             continue
 
     if progress_callback:
-        progress_callback(f"✅ Пост-валидация завершена: проверено {checked_clusters} кластеров", 100)
+        progress_callback(f"✅ Пост-валидация завершена: проверено {checked_clusters} кластеров, возвращено {total_moved} фото", 100)
 
     return total_moved
 
